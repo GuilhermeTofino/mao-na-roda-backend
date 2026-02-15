@@ -1,16 +1,16 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	// "github.com/golang-jwt/jwt/v5" // Descomentar quando implementar validação real JWT
+	"github.com/golang-jwt/jwt/v5"
 )
 
-// AuthMiddleware valida o token JWT do Supabase
-// NOTA: Em produção, você deve validar a assinatura do JWT usando a chave secreta do Supabase.
-// Para este exemplo, estamos apenas verificando a presença do token.
+// AuthMiddleware valida o token JWT do Supabase usando a chave secreta
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -26,17 +26,36 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		tokenString := parts[1]
+		jwtSecret := os.Getenv("SUPABASE_JWT_SECRET")
 
-		// TODO: Validar o token com a biblioteca JWT e a chave secreta do Supabase
-		// Por enquanto, assumimos que se o token existe, é válido (MOCK para desenvolvimento inicial)
-		if tokenString == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token inválido"})
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validar o algoritmo de assinatura
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("método de assinatura inesperado: %v", token.Header["alg"])
+			}
+			return []byte(jwtSecret), nil
+		})
+
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Token inválido ou expirado"})
 			return
 		}
 
-		// Extrair UserID do token (simulado)
-		// Em produção: claims := token.Claims.(jwt.MapClaims); userID := claims["sub"]
-		// c.Set("userID", userID)
+		// Extrair Claims
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Erro ao ler claims do token"})
+			return
+		}
+
+		// Adicionar ID do usuário ao contexto (Supabase usa 'sub' como ID)
+		if sub, ok := claims["sub"].(string); ok {
+			// Em alguns casos pode ser necessário simular que esse ID veio de Header (como fizemos no mock)
+			// Mas idealmente o handler leria do contexto.
+			// Vamos setar um Header interno para compatibilidade com o código atual que lê X-User-ID
+			c.Request.Header.Set("X-User-ID", sub)
+			c.Set("userID", sub)
+		}
 
 		c.Next()
 	}
